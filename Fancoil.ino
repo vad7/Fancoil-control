@@ -18,11 +18,18 @@
 #include "LiquidCrystal.h"
 #include "NTC.h"
 
+// MiniCore board: Atmega8a
+// BOD 4.0V
+// Clock 8.192 MHz (UART0=115200)
+// LTO enabled
 #define VERSION F("1.00")
 //#define DEBUG_TO_SERIAL
 
 #define KEYS_MUX		((1<<REFS0) | analogPinToChannel(A2))
+//#define EXIST_R10		// R10 = 30k pullup keys line to VCC
+#ifndef EXIST_R10
 #define KEYS_INIT		PORTC |= (1<<PC2) // Pull-up, to GND: LEFT - 10kOm, OK - 30kOm, RIGHT - 56kOm
+#endif
 #define FAN_SPEED1_PIN	9	// arduino Dx
 #define FAN_SPEED2_PIN	10	// arduino Dx
 
@@ -32,10 +39,8 @@ LiquidCrystal lcd( 6,  7,  2,  3,  4,  5);
 // Датчики температуры аналоговые - NTC
 #ifdef TEMP_TABLE_ADC_VALUES
 // Для воздуха
-// NTC, 100K, B25-3950, Таблица сопротивлений через 5° в Ом. (-20..95°), резистор 22.2k
-const TEMP_TABLE NTC_table1[] PROGMEM = { 1003, 996, 986, 975, 961, 943, 922, 898, 870, 838, 802, 763, 722, 678, 633, 587, 541, 496, 453, 412, 373, 337, 303, 273 };
-// NTC, 100K, B25-3950, Таблица сопротивлений через 5° в Ом. (-20..95°), резистор 100k
-//const TEMP_TABLE NTC_table1[] PROGMEM = { 935, 908, 874, 834, 789, 739, 685, 628, 570, 512, 456, 404, 355, 310, 270, 235, 204, 177, 153, 133, 115, 100, 87, 76 };
+// NTC, 100K, B25-3950, Таблица сопротивлений через 5° в Ом. (-20..95°), резистор 99.8k
+const TEMP_TABLE NTC_table1[] PROGMEM = { 935, 908, 874, 835, 790, 739, 685, 628, 570, 513, 457, 404, 355, 311, 271, 235, 204, 177, 154, 133, 116, 101, 88, 76 };
 #else
 // NTC, 100K, B25-3950, Таблица сопротивлений через 5° в Ом. (-20..95°)
 const TEMP_TABLE NTC_table1[] PROGMEM = { 1053847, 778981, 582457, 440260, 336206, 259246, 201746, 158371, 125353, 100000, 80371, 65055, 53015, 43481, 35882, 29784, 24862, 20864, 17598, 14917, 12703, 10867, 9336, 8054 };
@@ -47,10 +52,10 @@ const TEMP_TABLE NTC_table1[] PROGMEM = { 1053847, 778981, 582457, 440260, 33620
 // NTC, 10K, B25-3950, Таблица сопротивлений через 5° в Ом. (-20..95°)
 //const uint32_t NTC_table2[] PROGMEM = { 105385, 77898, 58246, 44026, 33621, 25925, 20175, 15837, 12535, 10000, 8037, 6506, 5301, 4348, 3588, 2978, 2486, 2086, 1760, 1492, 1270, 1087, 934, 805 };
 #ifdef TEMP_TABLE_ADC_VALUES
-// NTC, 10K, B25-3950, Таблица сопротивлений через 5° в Ом. (-20..95°), резистор 10k
-const TEMP_TABLE NTC_table2[] PROGMEM = { 935, 908, 874, 834, 789, 739, 685, 628, 570, 512, 456, 404, 355, 310, 270, 235, 204, 177, 153, 133, 115, 100, 87, 76 };
-// Thermistor Resistor NTC-MF52-103/3435 10K 3435+-1%, резистор 10k
-//const TEMP_TABLE NTC_table2[] PROGMEM = { 907, 877, 842, 803, 759, 713, 664, 613, 562, 512, 464, 417, 374, 334, 298, 265, 235, 209, 185, 164, 146, 130, 116, 103 };
+// NTC, 10K, B25-3950, Таблица сопротивлений через 5° в Ом. (-20..95°), резистор 9.978k
+const TEMP_TABLE NTC_table2[] PROGMEM = { 935, 908, 874, 835, 790, 739, 685, 628, 570, 513, 457, 404, 355, 311, 271, 235, 204, 177, 154, 133, 116, 101, 88, 76 };
+// Thermistor Resistor NTC-MF52-103/3435 10K 3435+-1%, резистор 9.978k
+//const TEMP_TABLE NTC_table2[] PROGMEM = { 907, 877, 842, 803, 760, 713, 664, 614, 563, 513, 464, 418, 375, 335, 298, 265, 236, 209, 185, 165, 146, 130, 116, 103 };
 #else
 
 // NTC, 10K, B25-3950, Таблица сопротивлений через 5° в Ом. (-20..95°)
@@ -240,6 +245,26 @@ void lcd_print_temp(int16_t t)
 		t = -t;
 	}
 	lcd.print(t / TEMP_DECIMAL_DIVIDER); lcd.print('.'); lcd.print(t % TEMP_DECIMAL_DIVIDER); // for %100 need different formula
+}
+
+// 0 - stop, 1 -
+void SetFanSpeed(uint8_t speed)
+{
+	if(speed > work.fan_speed_max) speed = work.fan_speed_max;
+	if(fan_speed != speed) {
+		fan_speed = speed;
+		fan_change_countdown = speed ? work.fan_work_time_min : work.fan_pause_min;
+		if(speed == 1) {
+			digitalWrite(FAN_SPEED2_PIN, 0);
+			digitalWrite(FAN_SPEED1_PIN, 1);
+		} else if(speed == 2) {
+			digitalWrite(FAN_SPEED1_PIN, 0);
+			digitalWrite(FAN_SPEED2_PIN, 1);
+		} else {
+			digitalWrite(FAN_SPEED1_PIN, 0);
+			digitalWrite(FAN_SPEED2_PIN, 0);
+		}
+	}
 }
 
 void SetupDisplay()
@@ -479,26 +504,6 @@ void SetupSettings(void)
 	WaitKeysRelease();
 }
 
-// 0 - stop, 1 -
-void SetFanSpeed(uint8_t speed)
-{
-	if(speed > work.fan_speed_max) speed = work.fan_speed_max;
-	if(fan_speed != speed) {
-		fan_speed = speed;
-		fan_change_countdown = speed ? work.fan_work_time_min : work.fan_pause_min;
-		if(speed == 1) {
-			digitalWrite(FAN_SPEED2_PIN, 0);
-			digitalWrite(FAN_SPEED1_PIN, 1);
-		} else if(speed == 2) {
-			digitalWrite(FAN_SPEED1_PIN, 0);
-			digitalWrite(FAN_SPEED2_PIN, 1);
-		} else {
-			digitalWrite(FAN_SPEED1_PIN, 0);
-			digitalWrite(FAN_SPEED2_PIN, 0);
-		}
-	}
-}
-
 void UpdateFan(void)
 {
 	if(!work.OnOff) {
@@ -584,8 +589,10 @@ void setup()
 	SMCR = (1<<SE); // Idle sleep enable
 #endif
 	wdt_enable(WDTO_2S); // Enable WDT
-	// Setup keys
+	// Setup ports
 	KEYS_INIT;
+	pinMode(FAN_SPEED1_PIN, OUTPUT);
+	pinMode(FAN_SPEED2_PIN, OUTPUT);
 	// Setup ADC, AVcc reference, first read keys
 	ADC_Selector = 0;
 	ADMUX = (1<<REFS0) | NTC_AnalogMux[ADC_Selector];
